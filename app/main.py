@@ -13,11 +13,13 @@ app/main.py
         API 응답 형식을 바꿀 때도 main.py나 schemas.py만 보면 된다.
 '''
 import logging
+import uuid
+from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException
 from contextlib import asynccontextmanager
 
 from app.model import LoanModel
-from app.schemas import LoanRequest, LoanResponse
+from app.schemas import LoanRequest, LoanResponse, BatchLoanRequest, BatchLoanResponse, ModelInfoResponse, EnhancedLoanResponse
 
 # 애플리케이션 전체의 기본 로그 레벨을 INFO로 설정한다.
 # __name__ 기반 로거를 사용한 로그에 현재 모듈 이름이 함께 기록된다.
@@ -91,12 +93,12 @@ async def health_check():
         'model_loaded': model_loaded
     }
 
-@app.post('/predict', response_model=LoanResponse)
+@app.post('/predict', response_model=EnhancedLoanResponse)
 async def predict(request: LoanRequest):
     """
     검증된 고객 정보를 모델에 전달하고 표준 응답 스키마로 반환한다.
 
-    FastAPI는 함수 호출 전에 JSON 요청 본문을 LoanRequest로 검증하고, 반환값도 LoanResponse 형식에
+    FastAPI는 함수 호출 전에 JSON 요청 본문을 LoanRequest로 검증하고, 반환값도 EnhancedLoanResponse 형식에
     맞는지 다시 확인 한다.    
     """
     model = app.state.model
@@ -104,7 +106,23 @@ async def predict(request: LoanRequest):
     try:
         # Pydantic 객체를 순수한 dict로 바꾸어 모델 계층과 API계층을 분리한다. (느슨한 결합)
         result = model.predict(request.model_dump())
-        return LoanResponse(**result)
+
+        # ----------------- 요청 추적용 메타데이터 (신규 추가) -----------------
+        # request_id / timestamp는 "무엇을 예측했는가"가 아니라, "언제, 어떤 요청이있는가"를
+        #   남기는 정보이므로 model.py가 아니라 main.py API 계층에서 만든다.
+        #   model.py의 predict()는 그대로 두고, 이 값만 API 응답에 얹는다.
+        #   - request_id --> 매 요청마다 새로 발급되는 UUID. 로그에서 "이 요청 하나"를
+        #                       정확히 찾아낼 수 있는 키가 된다.
+        #   - timestamp --> UTC 기준 ISO 8601 문자열. timezone.utc를 명시해야 서버가 어느시간대에
+        #                       있든 로그 시각 해석이 항상 같다.
+
+        return EnhancedLoanResponse(
+            request_id=str(uuid.uuid4()),
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            approved=result['approved'],
+            probability=result['probability'],
+            risk_grade=result['risk_grade'],
+        )
     except RuntimeError as e:
         # 모델이 준비되지 않은 상태는 일시적인 서비스 불가로 표현 
         # 503 에러 : Graceful Degradation의 HTTP 표현
@@ -114,3 +132,43 @@ async def predict(request: LoanRequest):
     except Exception as e:
         logger.error(f'예측 처리 중 예상치 못한 오류 발생 : {e}', exc_info=True)
         raise HTTPException(status_code=500)
+
+# ---------------------------------------------------------------------------
+# 배치 예측용 엔드포인트 (신규 추가)
+# ---------------------------------------------------------------------------    
+@app.post('/predict/batch', response_model=BatchLoanResponse)
+async def predict_batch(request: BatchLoanRequest):
+    """
+    여러 건의 대출 심사를 한 번의 요청으로 처리한다.
+    """
+    model = app.state.model
+
+    try:
+        data_list = [item.model_dump() for item in request.requests]
+        results = model.predict_batch(data_list)
+        return BatchLoanResponse(results=[LoanResponse(**r) for r in results])
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail='입력값처리오류')
+    except Exception as e:
+        logger.error(f'배치 예측 처리 중 예상치 못한 오류 발생: {e}', exc_info=True)
+        raise HTTPException(status_code=500)
+
+# ---------------------------------------------------------------------------
+# 모델 정보 엔드포인트 (신규 추가)
+#   API로 노출하면 좋은 점:
+#       - CI/CD 파이프라인에서 배포 후 자동 검증 가능
+#       - 모니터링 대시보드에서 실시간 모델 상태 표시
+#       - 디버깅 시 "어떤 모델이 이 결과를 냈는지" 추적 가능
+# ---------------------------------------------------------------------------    
+@app.get('/model/info', response_model=ModelInfoResponse)
+async def model_info():
+    model = app.state.model
+
+    return ModelInfoResponse(
+        model_name='loan-approval-xgboost',
+        model_version=model.model_version,
+        features=model.feature_names,
+        threshold=model.threshold,
+    )
