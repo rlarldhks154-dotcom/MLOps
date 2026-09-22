@@ -89,7 +89,7 @@ class LoanModel:
         self.label_encoders = joblib.load(encoder_path)
         self.feature_names = joblib.load(feature_names_path)
 
-        logging.info('모델 로드 완료!')
+        logger.info('모델 로드 완료!')
 
     # @staticmethod (정적 메서드)
     #   클래스 내부에 정의하지만 인스턴스(self)나 클래스(cls) 정보를 받지 않는 메서드를 만들 때 사용
@@ -101,21 +101,10 @@ class LoanModel:
             매핑표에 없는 키는 원래 키를 유지하므로 확장 필드가 있어도 즉시 사라지지 않는다.
             이후 feature_names 선택 단계에서 실제 입력만 남는다.
         """
-        # result = {}
-        # for k, v in data.items():  # ("age": "나이")
-        #     new_key = FIELD_TO_COLUMN.get(k, k)
-        #     result[new_key] = v
-
-        # return result # return {FIELD_TO_COLUMN.get(k, k): v for k, v in data.items()}
         result = {}
         for key, value in data.items():
-            if key in FIELD_TO_COLUMN:
-                korean_key = FIELD_TO_COLUMN[key]  # ex) 나이
-            else:
-                korean_key = key  # ex) age
+            korean_key = FIELD_TO_COLUMN.get(key, key)  # 매핑표에 있으면 한글 키, 없으면 원래 키 유지
             result[korean_key] = value
-
-
 
         return result
 
@@ -208,4 +197,3 @@ class LoanModel:
                 'risk_grade': risk_grade
             })
         return results
-        
