@@ -7,6 +7,9 @@
 #
 # yml의 위치 --> 루트의 .github/workflows/ 폴더 안
 # yml은 들여쓰기 지켜야 한다. --> 공백 2칸, 탭(Tab)은 YAML 에러의 원인이 된다.
+#
+# ※ 저장소 루트 자체가 mlops-loan 폴더이므로 working-directory나
+#    'mlops-loan/'을 붙인 경로가 필요 없다.
 # ===========================================================================
 
 # 워크플로우 이름
@@ -20,14 +23,12 @@ on:
     branches:
       - main  # 메인 브랜치에서 push할 때만
     paths:
-      - "mlops-loan/**"                       # 코드가 바뀐 경우
-      - "service-a-loan/**"                   # 코드가 바뀐 경우
-      - ".github/workflows/ci-service-a.yml"  # 이 워크플로우 파일 자체가 바뀐 경우
+      - "**"                                   # 저장소 내 코드가 바뀐 경우
+      - ".github/workflows/ci-service-a.yml"    # 이 워크플로우 파일 자체가 바뀐 경우
   pull_request:  # PR 생성/업데이트 시
     branches: [main]
     paths:
-      - "mlops-loan/**"
-      - "service-a-loan/**"
+      - "**"
       - ".github/workflows/ci-service-a.yml"
 
 # -------------------------------------------------
@@ -40,9 +41,7 @@ jobs:
   # job 1. lint-and-test: 코드 스타일 검사(ruff) + 테스트(pytest)
   lint-and-test:
     runs-on: ubuntu-latest  # 실행 환경(러너)
-    defaults:
-      run:  # 이 job의 모든 run: 단계를 mlops-loan 폴더 안에서 실행한다.
-        working-directory: mlops-loan
+    # 저장소 루트 자체가 mlops-loan 이므로 working-directory 지정 불필요
 
     steps:  # 위에서 아래로 순서대로 실행, 한 단계라도 실패하면 이후 단계는 건너뛴다.
       # -- 1. 코드 내려 받기 : 내 저장소 코드를 이 머신으로 가져오는 단계 ----------
@@ -58,7 +57,7 @@ jobs:
         with:
           path: ~/.cache/pip
           # key: 캐시의 이름표. 같은 key가 있으면 그 캐시를 복원한다.
-          key: ${{ runner.os }}-pip-${{ hashFiles('mlops-loan/requirements.txt') }}
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
           # 같은 key가 없을 때, 앞부분이 같은 이전 캐시라도 가져와 일부 재사용한다.
           restore-keys: |
             ${{ runner.os }}-pip-
@@ -70,7 +69,7 @@ jobs:
           pip install -r requirements.txt
           pip install ruff pytest httpx
 
-      # -- 5. 코드 스타일 검사 (린트) : 설정은 mlops-loan/ruff.toml을 자동으로 읽는다.  -----------
+      # -- 5. 코드 스타일 검사 (린트) : 설정은 ruff.toml을 자동으로 읽는다.  -----------
       - name: Lint with ruff
         run: ruff check .
 
@@ -86,10 +85,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # -- Dockerfile이 저장소 루트에 바로 있으므로 cd 없이 바로 빌드 -----------
       - name: Build Docker image
-        run: |
-          cd service-a-loan
-          docker build -t loan-api:ci-${{ github.sha }} .
+        run: docker build -t loan-api:ci-${{ github.sha }} .
 
       # -- 컨테이너 실행 + 헬스체크
       #   모델 파일을 읽는 동안 서버가 아직 준비되지 않았을 수 있어서(러너가 느린 날 실패)
