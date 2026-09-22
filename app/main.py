@@ -14,12 +14,20 @@ app/main.py
 '''
 import logging
 import uuid
-from datetime import datetime, timezone
-from fastapi import FastAPI, HTTPException
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+
+from fastapi import FastAPI, HTTPException
 
 from app.model import LoanModel
-from app.schemas import LoanRequest, LoanResponse, BatchLoanRequest, BatchLoanResponse, ModelInfoResponse, EnhancedLoanResponse
+from app.schemas import (
+    BatchLoanRequest,
+    BatchLoanResponse,
+    EnhancedLoanResponse,
+    LoanRequest,
+    LoanResponse,
+    ModelInfoResponse,
+)
 
 # 애플리케이션 전체의 기본 로그 레벨을 INFO로 설정한다.
 # __name__ 기반 로거를 사용한 로그에 현재 모듈 이름이 함께 기록된다.
@@ -44,7 +52,7 @@ async def lifespan(app: FastAPI):
     try:
         model.load()
         logger.info('모델 로드 성공')
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - 서버 시작을 막지 않기 위해 의도적으로 모든 예외를 잡음
         logger.error(f'모델 로드 실패: {e}')
         logger.warning('/predict 엔드포인트는 모델 로드 후 사용 가능')
 
@@ -127,10 +135,10 @@ async def predict(request: LoanRequest):
         # 모델이 준비되지 않은 상태는 일시적인 서비스 불가로 표현 
         # 503 에러 : Graceful Degradation의 HTTP 표현
         raise HTTPException(status_code=503, detail=str(e))
-    except ValueError as e:
+    except ValueError:
         raise HTTPException(status_code=422, detail='입력값처리오류')
-    except Exception as e:
-        logger.error(f'예측 처리 중 예상치 못한 오류 발생 : {e}', exc_info=True)
+    except Exception:
+        logger.exception('예측 처리 중 예상치 못한 오류 발생')
         raise HTTPException(status_code=500)
 
 # ---------------------------------------------------------------------------
@@ -149,10 +157,10 @@ async def predict_batch(request: BatchLoanRequest):
         return BatchLoanResponse(results=[LoanResponse(**r) for r in results])
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
-    except ValueError as e:
+    except ValueError:
         raise HTTPException(status_code=422, detail='입력값처리오류')
-    except Exception as e:
-        logger.error(f'배치 예측 처리 중 예상치 못한 오류 발생: {e}', exc_info=True)
+    except Exception:
+        logger.exception('배치 예측 처리 중 예상치 못한 오류 발생')
         raise HTTPException(status_code=500)
 
 # ---------------------------------------------------------------------------
